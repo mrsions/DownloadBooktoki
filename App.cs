@@ -91,6 +91,7 @@ namespace DownloadBooktoki
                 Log($"{name} ({i1}/{dirs.Length})");
 
                 var files = Directory.GetFiles(dir, "*.txt", SearchOption.TopDirectoryOnly)
+                    .Where(v => int.TryParse(Regex.Match(v, @"\d+").Value, out _))
                     .OrderBy(v => int.Parse(Regex.Match(v, @"\d+").Value))
                     .ToArray();
 
@@ -112,7 +113,7 @@ namespace DownloadBooktoki
                             writer = new StreamWriter(File.OpenWrite(path), Encoding.UTF8);
                         }
 
-                        writer.WriteLine(File.ReadAllText(files[i]));
+                        writer.WriteLine(NormalizeText(File.ReadAllText(files[i])));
                         writer.WriteLine();
                         writer.WriteLine();
                         writer.WriteLine();
@@ -177,7 +178,7 @@ namespace DownloadBooktoki
         {
             List<ViewItem> items = new();
 
-            var html = await GetHtml(listUrl, $"{DateTime.Now:yyyyMMddHH}.list", useCache: false);
+            var html = await GetHtml(listUrl, $"{DateTime.Now:yyyyMMdd}.list");
 
             var htmlDoc = new HtmlDocument();
             htmlDoc.LoadHtml(html);
@@ -238,21 +239,44 @@ namespace DownloadBooktoki
         {
             if (File.Exists(item.file)) return;
 
-            RETRY:
+            string html = "";
 
-            var html = await GetHtml(root + item.url);
+            for (int i = 0; i < 5; i++)
+            {
+                try
+                {
+                    html = await GetHtml(root + item.url);
+
+                    if (html.Contains("캡챠를 통과해야 컨텐츠를 확인할 수 있습니다."))
+                    {
+                        if (!await AuthCapcha())
+                        {
+                            Console.WriteLine("캡챠 인증 후 엔터.");
+                            Console.ReadLine();
+                        }
+                        i--;
+                        RemoveCache(root + item.url);
+                        continue;
+                    }
+
+                    if (html.Contains("\"novel_content\""))
+                    {
+                        break;
+                    }
+
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine(ex);
+                }
+
+                RemoveCache(root + item.url);
+                await Task.Delay(1000);
+                Log("wait for content");
+            }
+
             var htmlDoc = new HtmlDocument();
             htmlDoc.LoadHtml(html);
-
-            if (html.Contains("캡챠를 통과해야 컨텐츠를 확인할 수 있습니다."))
-            {
-                if (!await AuthCapcha(htmlDoc))
-                {
-                    Console.WriteLine("캡챠 인증 후 엔터.");
-                    Console.ReadLine();
-                }
-                goto RETRY;
-            }
 
             var novelContent = htmlDoc.DocumentNode.QuerySelector("article div#novel_content");
 
@@ -284,11 +308,12 @@ namespace DownloadBooktoki
                 }
             }
 
+            text = NormalizeText(text);
 
             File.WriteAllText(item.file, text);
         }
 
-        private static async Task<bool> AuthCapcha(HtmlDocument html)
+        private static async Task<bool> AuthCapcha()
         {
             for (int i = 0; i < 10; i++)
             {
@@ -317,6 +342,7 @@ namespace DownloadBooktoki
                     //"captcha_box"에 값 입력
                     var input = SeleniumHelper.driver!.FindElement(OpenQA.Selenium.By.CssSelector("#captcha_key"));
                     input.SendKeys(captchavalue);
+                    Console.WriteLine($"Captcha '{captchavalue}'");
 
                     //form[name=fcaptcha] div.row button  클릭
                     var button = SeleniumHelper.driver!.FindElement(By.CssSelector("form[name=fcaptcha] div.row button"));
@@ -365,6 +391,14 @@ namespace DownloadBooktoki
         private static HttpClientHandler? s_HttpClientHandler;
         private static HttpClient? s_HttpClient;
         private static DateTime? s_LastReadHttp;
+        private static void RemoveCache(string url, string suffix = "")
+        {
+            var cacheFileName = "cache/cache" + Rename(url) + suffix;
+            if (File.Exists(cacheFileName))
+            {
+                File.Delete(cacheFileName);
+            }
+        }
         private static async Task<string> GetHtml(string url, string suffix = "", bool useCache = true)
         {
             var cacheFileName = "cache/cache" + Rename(url) + suffix;
@@ -401,6 +435,8 @@ namespace DownloadBooktoki
                         }
                     }
 
+                    s_LastReadHttp = DateTime.Now;
+
                     string html;
 #if USE_SELENIUM
                     html = await SeleniumHelper.GetHtml(url);
@@ -412,9 +448,8 @@ namespace DownloadBooktoki
                     if (useCache)
                     {
                         Directory.CreateDirectory(Path.GetDirectoryName(cacheFileName)!);
-                        //await File.WriteAllTextAsync(cacheFileName, html);
+                        await File.WriteAllTextAsync(cacheFileName, html);
                     }
-                    s_LastReadHttp = DateTime.Now;
 
                     return html;
                 }
@@ -469,6 +504,21 @@ namespace DownloadBooktoki
         private static string Rename(string url)
         {
             return Regex.Replace(url, @"[/\\:*?""<>|]", "_");
+        }
+
+        private static string NormalizeText(string text)
+        {
+            text = text.Replace("\r", "");
+            text = Regex.Replace(text, @"\*{3,}", "***");
+            text = text.Replace('"', '"');
+            text = text.Replace('“', '"');
+            text = text.Replace("…", "...");
+            text = text.Replace("모든 노벨피 아 소설 획득 가능.", "...");
+            text = Regex.Replace(text, "^.*https.*$", "");
+            text = Regex.Replace(text, @"^[ -\)\+-/\[-`{-~:-@]+$", "", RegexOptions.Multiline);
+
+            text = Regex.Replace(text, @"\n{3,}", "\n\n");
+            return text;
         }
 
         private static string RenameArticle(string url)
