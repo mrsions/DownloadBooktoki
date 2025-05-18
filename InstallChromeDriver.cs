@@ -6,8 +6,16 @@ namespace DownloadBooktoki
 {
     public class InstallChromeDriver
     {
+        public static volatile bool isInstalling = false;
+
         public static async Task InstallAsync()
         {
+            lock(typeof(InstallChromeDriver))
+            {
+                if (isInstalling) return;
+                isInstalling = true;
+            }
+
             string chromeVersion = GetInstalledChromeVersion();
             if (!string.IsNullOrEmpty(chromeVersion))
             {

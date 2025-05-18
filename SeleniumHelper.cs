@@ -1,8 +1,4 @@
-﻿using OpenQA.Selenium;
-using OpenQA.Selenium.Chrome;
-using OpenQA.Selenium.DevTools;
-using OpenQA.Selenium.DevTools.V129;
-using OpenQA.Selenium.DevTools.V129.Network;
+﻿using OpenQA.Selenium.Chrome;
 
 namespace DownloadBooktoki
 {
